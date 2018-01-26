@@ -10,7 +10,8 @@ from pyscf import lib
 from pyscf import ao2mo
 import pyscf.lib.logger as log
 import pyscf.lib.parameters as param
-import mc_o0
+from pyscf import mcscf
+#import mc_o0
 
 # ref. JCP, 82, 5053;  JCP, 73, 2342
 # Eq. (C6) of JCP, 73, 2342 is wrong.  For spin-free 2rdm, [ij,kl] -> [kj,il]
@@ -159,7 +160,7 @@ def aug_hess(g, h):
     #print 'dx',dx
     print 'o0 aug', ith, w[ith], u[0,ith], numpy.linalg.norm(dx), numpy.linalg.norm(g)
     if numpy.linalg.norm(dx) > .25:
-        dx = dx * (.5/numpy.linalg.norm(dx))
+        dx = dx * (.1/numpy.linalg.norm(dx))
     if abs(u[0,ith]) < .1 or abs(u[0,ith]) > 1.1:
         raise ValueError('incorrect displacement in augmented hessian %g'
                          % u[0,ith])
@@ -181,29 +182,25 @@ def cycle(mol, mf, cas_eo):
     nmocc = nocc - nelec_cas//2 + nmocas
     mo = mf.mo_coeff
     nao, nmo = mo.shape
-    #mo = numpy.hstack((mo[:,[2,3,4,0,1]],mo[:,5:]))
-    #mo = numpy.hstack((mo[:,[1,3,4,0,2]],mo[:,5:]))
-    #mo = numpy.hstack((mo[:,[2,1,4,0,3]],mo[:,5:]))
-    #mo = numpy.hstack((mo[:,[2,3,1,0,4]],mo[:,5:]))
-    #mo = numpy.hstack((mo[:,[0,3,4,1,2]],mo[:,5:]))
-    #mo = numpy.hstack((mo[:,[0,2,4,1,3]],mo[:,5:]))
-    #mo = numpy.hstack((mo[:,[0,2,3,1,4]],mo[:,5:]))
-    #mo = numpy.hstack((mo[:,[0,1,4,2,3]],mo[:,5:]))
-    #mo = numpy.hstack((mo[:,[0,1,3,2,4]],mo[:,5:]))
-    #mo = numpy.hstack((mo[:,[0,1,2,3,4]],mo[:,5:]))
+
+    mc = mcscf.CASCI(mf, nmocas, nelec_cas)
+
     mo_cas = numpy.array(mo[:,nmocc-nmocas:nmocc], order='F')
     mo_core = mo[:,:nmocc-nmocas]
     elast = 0
-    for i in range(4):
+    for i in range(10):
 
-        eri_mo = ao2mo.incore.full(mf._eri, mo_cas)
-        e, rdm1, rdm2 = mc_o0.run_casci(mol, mf, mo_core, mo_cas, eri_mo, nelec_cas)
-        print 'e =', e
+        mo_new = numpy.hstack((mo_core, mo_cas))
+        mc.kernel(mo_new)
+        rdm1, rdm2 = mc.fcisolver.make_rdm12(mc.ci, nmocas, nelec_cas)
+        e = mc.e_cas
+
+        print 'cycle=', i, 'e =', e, 'e_tot =', mc.e_tot, 'de', e-elast
         if abs(elast - e) < 1e-10:
             break
         elast = e
 
-        for im in range(2):
+        for im in range(8):
             g, h = grad_hess(mol, mf, mo_cas, mo_core, mo, rdm1, rdm2)
             ilst, jlst = index_univar(nmocc-nmocas, nmocas, nmo-nmocc)
             g = g[ilst,jlst]
@@ -220,7 +217,7 @@ def cycle(mol, mf, cas_eo):
             mo_cas = numpy.array(mo[:,nmocc-nmocas:nmocc], order='F')
             mo_core = mo[:,:nmocc-nmocas]
 
-    return e
+    return mc.e_tot
 
 
 if __name__ == '__main__':
@@ -242,8 +239,12 @@ if __name__ == '__main__':
 
     m = scf.RHF(mol)
     ehf = m.scf()
-    emc = cycle(mol, m, (4,4))
+    emc = cycle(mol, m, (8,8))
     print ehf, emc, emc-ehf
     #-75.9577817425 -75.9741650131 -0.0163832706488
 
 
+#    mc = mcscf.CASSCF(m, 8, 8)
+#    mc.verbose = 4
+#    #mc.max_cycle_macro = 5
+#    mc.mc2step()
